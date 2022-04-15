@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+
+		<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
+
+		<script type="importmap">
+			{
+				"imports": {
+					"vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"
+				}
+			}
+		</script>
+
+		<title>McRover</title>
+	</head>
+	<body>
+		<div id="app">
+			<h1>{{ message }}</h1>
+
+            <table v-if="gamepad">
+                <tr><td>{{ gamepad.axes }}</td></tr>
+            </table>
+		</div>
+	</body>
+</html>
+
+<script type="module">
+import { createApp } from 'vue'
+
+createApp({
+    data() {
+        return {
+            wsConnected: false,
+            wsURL: 'ws://192.168.1.196:3000/ws',
+            ws: null,
+            message: 'Hello World!',
+            gamepadIndex: null,
+            gamepad: null,
+            gamepadCameraPanSending: false,
+            gamepadCameraTiltSending: false,
+        }
+    },
+	mounted() {
+        var self = this;
+        window.addEventListener("gamepadconnected", (e) => {
+            console.log("Gamepad connected at index %d: %s", e.gamepad.index, e.gamepad.id);
+            this.gamepadIndex = e.gamepad.index;
+        });
+        window.addEventListener("gamepaddisconnected", (e) => {
+            console.log("Gamepad disconnected at index %d: %s", e.gamepad.index, e.gamepad.id);
+            this.gamepadIndex = null;
+        });
+
+        window.setInterval(this.controllerLoop, 100);
+        this.wsConnect(this.wsURL);
+    },
+    methods: {
+        controllerLoop() {
+            if (this.gamepadIndex === null) {
+                return;
+
+                this.gamepad = {
+                    connected: true,
+                    id: 'Mock controller',
+                    axes: [0, 0, 0, 0],
+                };
+            }
+            this.gamepad = navigator.getGamepads()[this.gamepadIndex]
+
+            if (this.gamepad.axes[2] > 0.1 || this.gamepad.axes[2] < -0.1) {
+                this.ws.send("cameraPan,"+(this.gamepad.axes[2]).toFixed(1));
+                this.gamepadCameraPanSending = true;
+            } else if (this.gamepadCameraPanSending) {
+                // We were transmitting camera axes adjustments, we don't need to anymore, so send a final stop
+                this.ws.send("cameraPan,0");
+                this.gamepadCameraPanSending = false;
+            }
+
+            if (this.gamepad.axes[3] > 0.1 || this.gamepad.axes[3] < -0.1) {
+                this.ws.send("cameraTilt,"+(this.gamepad.axes[3]).toFixed(1));
+                this.gamepadCameraTiltSending = true;
+            } else if (this.gamepadCameraTiltSending) {
+                // We were transmitting camera axes adjustments, we don't need to anymore, so send a final stop
+                this.ws.send("cameraTilt,0");
+                this.gamepadCameraTiltSending = false;
+            }
+        },
+        wsConnect(url) {
+            this.ws = new WebSocket(url);
+
+            this.ws.onopen = (evt) => {
+                this.wsConnected = true;
+                // setTimeout(() => {this.fetchIMU()}, this.wsFetchRate);
+            };
+            this.ws.onclose = (evt) => {
+                this.wsConnected = false;
+                this.ws = null;
+                setTimeout(() => {this.wsConnect(url)}, 5000);
+            };
+            this.ws.onerror = (evt) => {
+                console.log("ERROR: " + evt.data);
+                console.log(evt);
+            };
+            this.ws.onmessage = (evt) => {
+                console.log(evt);
+            };
+
+            window.setTimeout(() => {
+                this.ws.send("Hey");
+            }, 1000);
+        },
+    }
+}).mount('#app')
+</script>
