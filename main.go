@@ -13,18 +13,34 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/d2r2/go-i2c"
 	"github.com/gorilla/websocket"
+	"github.com/stianeikeland/go-rpio"
 )
 
 var (
 	pan  int = 375
 	tilt int = 300
 	pwm  *i2c.I2C
+
+	lhsForward,
+	lhsReverse,
+	rhsForward,
+	rhsReverse rpio.Pin
+)
+
+const (
+	LHS_Forward_Pin = 24
+	LHS_Reverse_Pin = 23
+	LHS_PWM_Addr    = 0x42
+	RHS_Forward_Pin = 17
+	RHS_Reverse_Pin = 22
+	RHS_PWM_Addr    = 0x3e
 )
 
 func main() {
@@ -57,6 +73,30 @@ func main() {
 	if err != nil {
 		log.Fatal("could not write to i2c pwm:", err)
 	}
+
+	// Configure GPIO
+	if err := rpio.Open(); err != nil {
+		log.Fatal("could not open raspberry pi gpio:", err)
+	}
+	lhsForward = rpio.Pin(LHS_Forward_Pin)
+	lhsForward.PullDown()
+	lhsForward.Output()
+	lhsForward.Low()
+
+	lhsReverse = rpio.Pin(LHS_Reverse_Pin)
+	lhsReverse.PullDown()
+	lhsReverse.Output()
+	lhsReverse.Low()
+
+	rhsForward = rpio.Pin(RHS_Forward_Pin)
+	rhsForward.PullDown()
+	rhsForward.Output()
+	rhsForward.Low()
+
+	rhsReverse = rpio.Pin(RHS_Reverse_Pin)
+	rhsReverse.PullDown()
+	rhsReverse.Output()
+	rhsReverse.Low()
 
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/static/", http.StripPrefix("/static", fs))
@@ -103,7 +143,7 @@ func serveWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s := strings.Split(string(p), ",")
-		log.Printf("received: %s\n", p)
+		log.Printf("received: %s %+v\n", p, s)
 		if strings.HasPrefix(s[0], "cameraPan") {
 			v, err := strconv.ParseFloat(s[1], 32)
 			if err != nil {
@@ -154,6 +194,64 @@ func serveWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			tilt = newTilt
+		}
+
+		if strings.HasPrefix(s[0], "move") {
+			xaxis, err := strconv.ParseFloat(s[1], 32)
+			if err != nil {
+				log.Printf("cannot convert x-axis float value for command '%s': %s", p, err)
+			}
+			_ = xaxis
+
+			yaxis, err := strconv.ParseFloat(s[2], 32)
+			if err != nil {
+				log.Printf("cannot convert y-axis float value for command '%s': %s", p, err)
+			}
+
+			// Direction: forward, reverse or stop
+			if yaxis == 0 {
+				// Stop
+				lhsForward.Low()
+				lhsReverse.Low()
+				rhsForward.Low()
+				rhsReverse.Low()
+				continue
+			}
+
+			if yaxis < 0 {
+				lhsForward.High()
+				lhsReverse.Low()
+				rhsForward.High()
+				rhsReverse.Low()
+			}
+
+			if yaxis > 0 {
+				lhsForward.Low()
+				lhsReverse.High()
+				rhsForward.Low()
+				rhsReverse.High()
+			}
+
+			// Speed
+			pwmVal := math.Abs(yaxis * (1 - math.Pow(2, 12)))
+
+			log.Printf("x: %v, y: %v, pwm speed: %v", xaxis, yaxis, pwmVal)
+
+			// LHS
+			bs := make([]byte, 2)
+			binary.LittleEndian.PutUint16(bs, uint16(pwmVal))
+			_, err = pwm.WriteBytes(append([]byte{LHS_PWM_Addr, 0x00, 0x00}, bs...))
+			if err != nil {
+				log.Println("could not write new pwm speed:", err)
+				continue
+			}
+
+			// RHS
+			_, err = pwm.WriteBytes(append([]byte{RHS_PWM_Addr, 0x00, 0x00}, bs...))
+			if err != nil {
+				log.Println("could not write new pwm speed:", err)
+				continue
+			}
 		}
 
 		log.Printf("ws type: %v, msg: %s", messageType, p)

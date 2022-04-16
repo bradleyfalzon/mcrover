@@ -41,6 +41,7 @@ createApp({
             gamepad: null,
             gamepadCameraPanSending: false,
             gamepadCameraTiltSending: false,
+            gamepadMoveSending: false,
         }
     },
 	mounted() {
@@ -70,6 +71,14 @@ createApp({
             }
             this.gamepad = navigator.getGamepads()[this.gamepadIndex]
 
+            if (Math.abs(this.gamepad.axes[0]) > 0.1 || Math.abs(this.gamepad.axes[1]) > 0.1) {
+                this.ws.send("move,"+(this.gamepad.axes[0]).toFixed(1)+","+(this.gamepad.axes[1]).toFixed(1));
+                this.gamepadMoveSending = true;
+            } else if (this.gamepadMoveSending) {
+                this.ws.send("move,0,0");
+                this.gamepadMoveSending = false;
+            }
+
             if (this.gamepad.axes[2] > 0.1 || this.gamepad.axes[2] < -0.1) {
                 this.ws.send("cameraPan,"+(this.gamepad.axes[2]).toFixed(1));
                 this.gamepadCameraPanSending = true;
@@ -87,6 +96,7 @@ createApp({
                 this.ws.send("cameraTilt,0");
                 this.gamepadCameraTiltSending = false;
             }
+
         },
         wsConnect(url) {
             this.ws = new WebSocket(url);
