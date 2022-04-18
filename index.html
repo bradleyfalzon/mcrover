@@ -72,7 +72,7 @@ createApp({
             this.gamepad = navigator.getGamepads()[this.gamepadIndex]
 
             if (Math.abs(this.gamepad.axes[0]) > 0.1 || Math.abs(this.gamepad.axes[1]) > 0.1) {
-                this.ws.send("move,"+(this.gamepad.axes[0]).toFixed(1)+","+(this.gamepad.axes[1]).toFixed(1));
+                this.ws.send("move,"+(this.gamepad.axes[0]).toFixed(2)+","+(this.gamepad.axes[1]).toFixed(2));
                 this.gamepadMoveSending = true;
             } else if (this.gamepadMoveSending) {
                 this.ws.send("move,0,0");

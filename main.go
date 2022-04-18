@@ -208,50 +208,96 @@ func serveWS(w http.ResponseWriter, r *http.Request) {
 				log.Printf("cannot convert y-axis float value for command '%s': %s", p, err)
 			}
 
+			lhsForwardState := rpio.Low
+			lhsReverseState := rpio.Low
+			rhsForwardState := rpio.Low
+			rhsReverseState := rpio.Low
+
 			// Direction: forward, reverse or stop
 			if yaxis == 0 {
 				// Stop
-				lhsForward.Low()
-				lhsReverse.Low()
-				rhsForward.Low()
-				rhsReverse.Low()
-				continue
 			}
 
 			if yaxis < 0 {
-				lhsForward.High()
-				lhsReverse.Low()
-				rhsForward.High()
-				rhsReverse.Low()
+				lhsForwardState = rpio.High
+				rhsForwardState = rpio.High
 			}
 
 			if yaxis > 0 {
-				lhsForward.Low()
-				lhsReverse.High()
-				rhsForward.Low()
-				rhsReverse.High()
+				lhsReverseState = rpio.High
+				rhsReverseState = rpio.High
 			}
 
 			// Speed
-			pwmVal := math.Abs(yaxis * (1 - math.Pow(2, 12)))
+			yaxisPower := math.Abs(yaxis * (1 - math.Pow(2, 12)))
+			xaxisPower := math.Abs(xaxis * (1 - math.Pow(2, 12)))
 
-			log.Printf("x: %v, y: %v, pwm speed: %v", xaxis, yaxis, pwmVal)
+			lhsPwmVal := math.Max(yaxisPower, xaxisPower)
+			rhsPwmVal := math.Max(yaxisPower, xaxisPower)
+
+			// Differential
+			if xaxis > 0.3 {
+				// Turning right
+				rhsPwmBias := 1 - math.Abs(xaxis)*2
+				log.Printf("turning right: old rhsPwm: %.0f, rhsPwmBias: %.2f, new rhsPwm: %.0f", rhsPwmVal, rhsPwmBias, rhsPwmVal*rhsPwmBias)
+				rhsPwmVal = rhsPwmVal * rhsPwmBias
+
+				//rhsPwmVal = 0
+				//rhsForward.Low()
+				//rhsReverse.Low()
+
+				if rhsPwmVal < 0 {
+					rhsForwardState = rpio.Low
+					rhsReverseState = rpio.High
+					rhsPwmVal = math.Abs(rhsPwmVal)
+				}
+
+			}
+
+			if xaxis < -0.3 {
+				//if xaxis < 0 && xaxis > -0.5 {
+				// Turning left
+				lhsPwmBias := 1 - math.Abs(xaxis)*2
+				log.Printf("turning left: old lhsPwm: %.0f, lhsPwmBias: %.2f, new lhsPwm: %.0f", lhsPwmVal, lhsPwmBias, lhsPwmVal*lhsPwmBias)
+				lhsPwmVal = lhsPwmVal * lhsPwmBias
+
+				//lhsPwmVal = 0
+				//lhsForward.Low()
+				//lhsReverse.Low()
+
+				if lhsPwmVal < 0 {
+					lhsForwardState = rpio.Low
+					lhsReverseState = rpio.High
+					lhsPwmVal = math.Abs(lhsPwmVal)
+				}
+			}
+
+			lhsPwmVal = math.Max(lhsPwmVal, 0)
+			lhsPwmVal = math.Min(lhsPwmVal, math.Pow(2, 12))
+
+			rhsPwmVal = math.Max(rhsPwmVal, 0)
+			rhsPwmVal = math.Min(rhsPwmVal, math.Pow(2, 12))
+
+			log.Printf("x: %.0f, y: %.0f, lhs pwm: %.0f, rhs pwm: %.0f\n", xaxis, yaxis, lhsPwmVal, rhsPwmVal)
 
 			// LHS
 			bs := make([]byte, 2)
-			binary.LittleEndian.PutUint16(bs, uint16(pwmVal))
+			binary.LittleEndian.PutUint16(bs, uint16(rhsPwmVal))
 			_, err = pwm.WriteBytes(append([]byte{LHS_PWM_Addr, 0x00, 0x00}, bs...))
 			if err != nil {
 				log.Println("could not write new pwm speed:", err)
-				continue
 			}
+			lhsForward.Write(lhsForwardState)
+			lhsReverse.Write(lhsReverseState)
 
 			// RHS
+			binary.LittleEndian.PutUint16(bs, uint16(rhsPwmVal))
 			_, err = pwm.WriteBytes(append([]byte{RHS_PWM_Addr, 0x00, 0x00}, bs...))
 			if err != nil {
 				log.Println("could not write new pwm speed:", err)
-				continue
 			}
+			rhsForward.Write(rhsForwardState)
+			rhsReverse.Write(rhsReverseState)
 		}
 
 		log.Printf("ws type: %v, msg: %s", messageType, p)
